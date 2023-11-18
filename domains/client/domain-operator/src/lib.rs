@@ -79,7 +79,9 @@ mod utils;
 pub use self::aux_schema::load_execution_receipt;
 pub use self::bootstrapper::{BootstrapResult, Bootstrapper};
 pub use self::operator::Operator;
-pub use self::utils::{DomainBlockImportNotification, DomainImportNotifications};
+pub use self::utils::{
+    executor_config, executor_limits, DomainBlockImportNotification, DomainImportNotifications,
+};
 use futures::channel::mpsc;
 use futures::Stream;
 use sc_client_api::{AuxStore, BlockImportNotification};

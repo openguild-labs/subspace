@@ -139,6 +139,7 @@ pub fn node_config(
             instantiation_strategy: WasmtimeInstantiationStrategy::PoolingCopyOnWrite,
         },
         wasm_runtime_overrides: Default::default(),
+        executor_config: None,
         rpc_addr: None,
         rpc_max_request_size: 0,
         rpc_max_response_size: 0,
@@ -205,6 +206,7 @@ where
             FraudProofHostFunctionsImpl::<_, _, DomainBlock, Executor>::new(
                 self.consensus_client.clone(),
                 self.executor.clone(),
+                None,
             ),
         )));
         exts

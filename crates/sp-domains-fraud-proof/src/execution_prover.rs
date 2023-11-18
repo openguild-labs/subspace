@@ -7,6 +7,7 @@ use crate::fraud_proof::ExecutionPhase;
 use codec::Codec;
 use hash_db::{HashDB, Hasher, Prefix};
 use sc_client_api::backend::Backend;
+use sc_client_api::ExecutorLimits;
 use sp_api::StorageProof;
 use sp_core::traits::CodeExecutor;
 use sp_core::H256;
@@ -21,6 +22,7 @@ use std::sync::Arc;
 pub struct ExecutionProver<Block, B, Exec> {
     backend: Arc<B>,
     executor: Arc<Exec>,
+    limits: Option<Arc<dyn ExecutorLimits>>,
     _phantom: PhantomData<Block>,
 }
 
@@ -31,10 +33,15 @@ where
     Exec: CodeExecutor + 'static,
 {
     /// Constructs a new instance of [`ExecutionProver`].
-    pub fn new(backend: Arc<B>, executor: Arc<Exec>) -> Self {
+    pub fn new(
+        backend: Arc<B>,
+        executor: Arc<Exec>,
+        limits: Option<Arc<dyn ExecutorLimits>>,
+    ) -> Self {
         Self {
             backend,
             executor,
+            limits,
             _phantom: PhantomData::<Block>,
         }
     }
@@ -69,6 +76,9 @@ where
                 call_data,
                 &runtime_code,
                 &mut Default::default(),
+                self.limits
+                    .as_ref()
+                    .and_then(|limits| limits.storage_limit(execution_phase.proving_method())),
             )
             .map(|(_ret, proof)| proof)
             .map_err(Into::into)
@@ -81,6 +91,9 @@ where
                 call_data,
                 &runtime_code,
                 &mut Default::default(),
+                self.limits
+                    .as_ref()
+                    .and_then(|limits| limits.storage_limit(execution_phase.proving_method())),
             )
             .map(|(_ret, proof)| proof)
             .map_err(Into::into)
@@ -117,6 +130,9 @@ where
             execution_phase.verifying_method(),
             call_data,
             &runtime_code,
+            self.limits
+                .as_ref()
+                .and_then(|limits| limits.storage_limit(execution_phase.proving_method())),
         )
         .map_err(Into::into)
     }

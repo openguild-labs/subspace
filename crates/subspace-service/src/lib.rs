@@ -35,6 +35,7 @@ use crate::metrics::NodeMetrics;
 use crate::transaction_pool::FullPool;
 use core::sync::atomic::{AtomicU32, Ordering};
 use cross_domain_message_gossip::cdm_gossip_peers_set_config;
+use domain_client_operator::executor_limits;
 use domain_runtime_primitives::opaque::{Block as DomainBlock, Header as DomainHeader};
 pub use dsn::DsnConfig;
 use frame_system_rpc_runtime_api::AccountNonceApi;
@@ -347,6 +348,7 @@ where
             FraudProofHostFunctionsImpl::<_, _, DomainBlock, ExecutorDispatch>::new(
                 self.client.clone(),
                 self.executor.clone(),
+                executor_limits(),
             ),
         )));
 

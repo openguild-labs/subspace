@@ -119,6 +119,7 @@ pub fn node_config(
         wasm_method: WasmExecutionMethod::Compiled {
             instantiation_strategy: WasmtimeInstantiationStrategy::PoolingCopyOnWrite,
         },
+        executor_config: None,
         rpc_addr: None,
         rpc_max_request_size: 0,
         rpc_max_response_size: 0,

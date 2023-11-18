@@ -2,7 +2,7 @@ use super::{evm_chain_spec, DomainCli};
 use crate::domain::{AccountId20, EVMDomainExecutorDispatch};
 use crate::ExecutorDispatch as CExecutorDispatch;
 use cross_domain_message_gossip::Message;
-use domain_client_operator::{BootstrapResult, OperatorStreams};
+use domain_client_operator::{executor_config, BootstrapResult, OperatorStreams};
 use domain_eth_service::provider::EthProvider;
 use domain_eth_service::DefaultEthConfig;
 use domain_runtime_primitives::opaque::Block as DomainBlock;
@@ -227,6 +227,7 @@ fn create_configuration<
         blocks_pruning: cli_config.blocks_pruning()?,
         wasm_method: cli_config.wasm_method()?,
         wasm_runtime_overrides: cli_config.wasm_runtime_overrides(),
+        executor_config: executor_config(),
         rpc_addr: cli_config.rpc_addr(DCV::rpc_listen_port())?,
         rpc_methods: cli_config.rpc_methods()?,
         rpc_max_connections: cli_config.rpc_max_connections()?,

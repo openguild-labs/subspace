@@ -1,4 +1,5 @@
 use crate::aux_schema::BundleMismatchType;
+use crate::utils::executor_limits;
 use crate::ExecutionReceiptFor;
 use codec::{Decode, Encode};
 use domain_block_builder::{BlockBuilder, RecordProof};
@@ -283,7 +284,11 @@ where
         let header = self.header(block_hash)?;
         let parent_header = self.header(*header.parent_hash())?;
 
-        let prover = ExecutionProver::new(self.backend.clone(), self.code_executor.clone());
+        let prover = ExecutionProver::new(
+            self.backend.clone(),
+            self.code_executor.clone(),
+            executor_limits(),
+        );
 
         let inherent_digests = Digest {
             logs: vec![DigestItem::consensus_block_info(

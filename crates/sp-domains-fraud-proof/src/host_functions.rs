@@ -7,7 +7,7 @@ use domain_block_preprocessor::runtime_api::{
     SetCodeConstructor, SignerExtractor, TimestampExtrinsicConstructor,
 };
 use domain_block_preprocessor::runtime_api_light::RuntimeApiLight;
-use sc_client_api::BlockBackend;
+use sc_client_api::{BlockBackend, ExecutorLimits};
 use sc_executor::RuntimeVersionOf;
 use sp_api::{BlockT, HashT, ProvideRuntimeApi};
 use sp_blockchain::HeaderBackend;
@@ -78,16 +78,22 @@ impl FraudProofExtension {
 pub struct FraudProofHostFunctionsImpl<Block, Client, DomainBlock, Executor> {
     consensus_client: Arc<Client>,
     executor: Arc<Executor>,
+    limits: Option<Arc<dyn ExecutorLimits>>,
     _phantom: PhantomData<(Block, DomainBlock)>,
 }
 
 impl<Block, Client, DomainBlock, Executor>
     FraudProofHostFunctionsImpl<Block, Client, DomainBlock, Executor>
 {
-    pub fn new(consensus_client: Arc<Client>, executor: Arc<Executor>) -> Self {
+    pub fn new(
+        consensus_client: Arc<Client>,
+        executor: Arc<Executor>,
+        limits: Option<Arc<dyn ExecutorLimits>>,
+    ) -> Self {
         FraudProofHostFunctionsImpl {
             consensus_client,
             executor,
+            limits,
             _phantom: Default::default(),
         }
     }
@@ -459,6 +465,9 @@ where
             verifying_method,
             call_data,
             &runtime_code,
+            self.limits
+                .as_ref()
+                .and_then(|limits| limits.storage_limit(verifying_method)),
         )
         .ok()
     }
