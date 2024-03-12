@@ -917,6 +917,44 @@ impl SingleDiskFarm {
         #[cfg(windows)]
         let mut plot_file = UnbufferedIoFileWindows::open(&directory.join(Self::PLOT_FILE))?;
 
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
+
+        let farming_thread_pool = ThreadPoolBuilder::new()
+            .thread_name(move |thread_index| format!("farming-{disk_farm_index}.{thread_index}"))
+            .num_threads(farming_thread_pool_size)
+            .spawn_handler(tokio_rayon_spawn_handler())
+            .build()
+            .map_err(SingleDiskFarmError::FailedToCreateThreadPool)?;
+        let farming_plot = farming_thread_pool.install(|| {
+            #[cfg(windows)]
+            {
+                RayonFiles::open_with(
+                    &directory.join(Self::PLOT_FILE),
+                    UnbufferedIoFileWindows::open,
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                RayonFiles::open(&directory.join(Self::PLOT_FILE))
+            }
+        })?;
+
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
+
+        {
+            // Error doesn't matter here
+            let _permit = faster_read_sector_record_chunks_mode_concurrency
+                .acquire()
+                .await;
+            info!("Bench a");
+            farming_thread_pool.install(|| {
+                let _span_guard = span.enter();
+                faster_read_sector_record_chunks_mode(&plot_file, &farming_plot, sector_size)
+            })?;
+        }
+
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
+
         if plot_file.size()? != plot_file_size {
             // Allocating the whole file (`set_len` below can create a sparse file, which will cause
             // writes to fail later)
@@ -934,6 +972,44 @@ impl SingleDiskFarm {
         }
 
         let plot_file = Arc::new(plot_file);
+
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
+
+        let farming_thread_pool = ThreadPoolBuilder::new()
+            .thread_name(move |thread_index| format!("farming-{disk_farm_index}.{thread_index}"))
+            .num_threads(farming_thread_pool_size)
+            .spawn_handler(tokio_rayon_spawn_handler())
+            .build()
+            .map_err(SingleDiskFarmError::FailedToCreateThreadPool)?;
+        let farming_plot = farming_thread_pool.install(|| {
+            #[cfg(windows)]
+            {
+                RayonFiles::open_with(
+                    &directory.join(Self::PLOT_FILE),
+                    UnbufferedIoFileWindows::open,
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                RayonFiles::open(&directory.join(Self::PLOT_FILE))
+            }
+        })?;
+
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
+
+        {
+            // Error doesn't matter here
+            let _permit = faster_read_sector_record_chunks_mode_concurrency
+                .acquire()
+                .await;
+            info!("Bench b");
+            farming_thread_pool.install(|| {
+                let _span_guard = span.enter();
+                faster_read_sector_record_chunks_mode(&*plot_file, &farming_plot, sector_size)
+            })?;
+        }
+
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
 
         let piece_cache = DiskPieceCache::open(&directory, cache_capacity)?;
         let plot_cache = DiskPlotCache::new(
@@ -1084,12 +1160,6 @@ impl SingleDiskFarm {
             }
         }));
 
-        let farming_thread_pool = ThreadPoolBuilder::new()
-            .thread_name(move |thread_index| format!("farming-{disk_farm_index}.{thread_index}"))
-            .num_threads(farming_thread_pool_size)
-            .spawn_handler(tokio_rayon_spawn_handler())
-            .build()
-            .map_err(SingleDiskFarmError::FailedToCreateThreadPool)?;
         let farming_plot = farming_thread_pool.install(|| {
             #[cfg(windows)]
             {
@@ -1111,10 +1181,101 @@ impl SingleDiskFarm {
             let _permit = faster_read_sector_record_chunks_mode_concurrency
                 .acquire()
                 .await;
+            info!("Testing unbuffered");
             farming_thread_pool.install(|| {
+                let _span_guard = span.enter();
                 faster_read_sector_record_chunks_mode(&*plot_file, &farming_plot, sector_size)
             })?
         };
+        if cfg!(windows) {
+            farming_thread_pool.install(|| {
+                let plot_audit = PlotAudit::new(&farming_plot);
+                {
+                    let options = farming::PlotAuditOptions::<PosTable> {
+                        public_key: &public_key,
+                        reward_address: &reward_address,
+                        slot_info: subspace_rpc_primitives::SlotInfo {
+                            slot_number: 0,
+                            global_challenge: rand::random(),
+                            // Solution is guaranteed to be found
+                            solution_range: subspace_core_primitives::SolutionRange::MAX,
+                            // Solution is guaranteed to be found
+                            voting_solution_range: subspace_core_primitives::SolutionRange::MAX,
+                        },
+                        sectors_metadata: &sectors_metadata.read_blocking(),
+                        kzg: &kzg,
+                        erasure_coding: &erasure_coding,
+                        maybe_sector_being_modified: None,
+                        read_sector_record_chunks_mode,
+                        table_generator: &Mutex::new(PosTable::generator()),
+                    };
+
+                    let mut audit_results = plot_audit.audit(options).unwrap();
+                    let start = std::time::Instant::now();
+                    audit_results.pop().unwrap().1.next();
+                    info!("Proved in {:?}", start.elapsed());
+                }
+            });
+        }
+
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
+        let farming_plot = farming_thread_pool.install(|| {
+            // #[cfg(windows)]
+            // {
+            //     RayonFiles::open_with(
+            //         &directory.join(Self::PLOT_FILE),
+            //         UnbufferedIoFileWindows::open,
+            //     )
+            // }
+            // #[cfg(not(windows))]
+            {
+                RayonFiles::open(&directory.join(Self::PLOT_FILE))
+            }
+        })?;
+
+        let read_sector_record_chunks_mode = {
+            // Error doesn't matter here
+            let _permit = faster_read_sector_record_chunks_mode_concurrency
+                .acquire()
+                .await;
+            info!("Testing regular");
+            farming_thread_pool.install(|| {
+                let _span_guard = span.enter();
+                faster_read_sector_record_chunks_mode(&*plot_file, &farming_plot, sector_size)
+            })?
+        };
+        if cfg!(windows) {
+            farming_thread_pool.install(|| {
+                let plot_audit = PlotAudit::new(&farming_plot);
+                {
+                    let options = farming::PlotAuditOptions::<PosTable> {
+                        public_key: &public_key,
+                        reward_address: &reward_address,
+                        slot_info: subspace_rpc_primitives::SlotInfo {
+                            slot_number: 0,
+                            global_challenge: rand::random(),
+                            // Solution is guaranteed to be found
+                            solution_range: subspace_core_primitives::SolutionRange::MAX,
+                            // Solution is guaranteed to be found
+                            voting_solution_range: subspace_core_primitives::SolutionRange::MAX,
+                        },
+                        sectors_metadata: &sectors_metadata.read_blocking(),
+                        kzg: &kzg,
+                        erasure_coding: &erasure_coding,
+                        maybe_sector_being_modified: None,
+                        read_sector_record_chunks_mode,
+                        table_generator: &Mutex::new(PosTable::generator()),
+                    };
+
+                    let mut audit_results = plot_audit.audit(options).unwrap();
+                    let start = std::time::Instant::now();
+                    audit_results.pop().unwrap().1.next();
+                    info!("Proved in {:?}", start.elapsed());
+                }
+            });
+        }
+
+        faster_read_sector_record_chunks_mode_barrier.wait().await;
 
         let farming_join_handle = tokio::task::spawn_blocking({
             let erasure_coding = erasure_coding.clone();
@@ -2110,6 +2271,8 @@ where
                 })?;
             let elapsed = start.elapsed();
 
+            info!("Chunks in {elapsed:?}");
+
             if fastest_time > elapsed {
                 fastest_mode = ReadSectorRecordChunksMode::ConcurrentChunks;
                 fastest_time = elapsed;
@@ -2121,6 +2284,8 @@ where
             farming_plot.read_at(&mut sector_bytes, 0)?;
             let elapsed = start.elapsed();
 
+            info!("Whole sector in {elapsed:?}");
+
             if fastest_time > elapsed {
                 fastest_mode = ReadSectorRecordChunksMode::WholeSector;
                 fastest_time = elapsed;
@@ -2128,7 +2293,7 @@ where
         }
     }
 
-    debug!(?fastest_mode, "Faster proving method found");
+    info!(?fastest_mode, "Faster proving method found");
 
     Ok(fastest_mode)
 }
