@@ -5,6 +5,7 @@ use crate::commands::farm::dsn::configure_dsn;
 use crate::commands::farm::metrics::{FarmerMetrics, SectorState};
 use crate::utils::shutdown_signal;
 use anyhow::anyhow;
+use async_lock::Mutex as AsyncMutex;
 use backoff::ExponentialBackoff;
 use bytesize::ByteSize;
 use clap::{Parser, ValueHint};
@@ -653,23 +654,24 @@ where
     let (single_disk_farms, plotting_delay_senders) = tokio::task::block_in_place(|| {
         let handle = Handle::current();
         let global_mutex = Arc::default();
-        let info_mutex = &Mutex::<()>::default();
-        let faster_read_sector_record_chunks_mode_barrier = &Barrier::new(disk_farms.len());
-        let faster_read_sector_record_chunks_mode_concurrency = &Semaphore::new(1);
+        let info_mutex = &AsyncMutex::<()>::default();
+        let faster_read_sector_record_chunks_mode_barrier =
+            Arc::new(Barrier::new(disk_farms.len()));
+        let faster_read_sector_record_chunks_mode_concurrency = Arc::new(Semaphore::new(1));
         let (plotting_delay_senders, plotting_delay_receivers) = (0..disk_farms.len())
             .map(|_| oneshot::channel())
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
         let single_disk_farms = disk_farms
-            .into_par_iter()
+            .into_iter()
             .zip(plotting_delay_receivers)
             .enumerate()
             .map(
-                move |(disk_farm_index, (disk_farm, plotting_delay_receiver))| {
+                move |(disk_farm_index, (disk_farm, plotting_delay_receiver))| async move {
                     let _tokio_handle_guard = handle.enter();
 
                     debug!(url = %node_rpc_url, %disk_farm_index, "Connecting to node RPC");
-                    let node_client = handle.block_on(NodeRpcClient::new(&node_rpc_url))?;
+                    let node_client = NodeRpcClient::new(&node_rpc_url).await?;
 
                     let single_disk_farm_fut = SingleDiskFarm::new::<_, _, PosTable>(
                         SingleDiskFarmOptions {
@@ -691,13 +693,17 @@ where
                             plotting_delay: Some(plotting_delay_receiver),
                             global_mutex: Arc::clone(&global_mutex),
                             disable_farm_locking,
-                            faster_read_sector_record_chunks_mode_barrier,
-                            faster_read_sector_record_chunks_mode_concurrency,
+                            faster_read_sector_record_chunks_mode_barrier: Arc::clone(
+                                &faster_read_sector_record_chunks_mode_barrier,
+                            ),
+                            faster_read_sector_record_chunks_mode_concurrency: Arc::clone(
+                                &faster_read_sector_record_chunks_mode_concurrency,
+                            ),
                         },
                         disk_farm_index,
                     );
 
-                    let single_disk_farm = match handle.block_on(single_disk_farm_fut) {
+                    let single_disk_farm = match single_disk_farm_fut.await {
                         Ok(single_disk_farm) => single_disk_farm,
                         Err(SingleDiskFarmError::InsufficientAllocatedSpace {
                             min_space,
@@ -719,7 +725,7 @@ where
                     };
 
                     if !no_info {
-                        let _info_guard = info_mutex.lock();
+                        let _info_guard = info_mutex.lock().await;
 
                         let info = single_disk_farm.info();
                         println!("Single disk farm {disk_farm_index}:");
@@ -737,10 +743,14 @@ where
                     Ok(single_disk_farm)
                 },
             )
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<FuturesUnordered<_>>()
+            .collect::<Result<Vec<_>, _>>()
+            .await?;
 
         anyhow::Ok((single_disk_farms, plotting_delay_senders))
     })?;
+
+    println!("X");
 
     {
         let handler_id = Arc::new(Mutex::new(None));
