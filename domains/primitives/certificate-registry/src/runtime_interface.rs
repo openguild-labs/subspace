@@ -8,7 +8,6 @@ use sp_runtime_interface::runtime_interface;
 /// Certificate registry runtime interfaces for X509 certificate.
 #[runtime_interface]
 pub trait X509CertificateRuntimeInterface {
-    #[allow(dead_code)]
     fn verify_x509_certificate(
         &mut self,
         req: X509CertificateVerificationRequest,
